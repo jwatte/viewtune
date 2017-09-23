@@ -3,6 +3,7 @@
 // are changed infrequently
 //
 
+#if defined(_MSC_VER)
 #pragma once
 
 #include "targetver.h"
@@ -11,6 +12,9 @@
 
 #include <stdio.h>
 #include <tchar.h>
+#else
+#include <stdio.h>
+#endif
 
 
 

@@ -14,3 +14,4 @@ Win32
 *.dll
 *.VC.*
 ipch
+obj
