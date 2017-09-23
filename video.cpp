@@ -107,7 +107,6 @@ parse_more:
     if (!indata) {
         return nullptr;
     }
-    size_t readBufOffset = readBuf.size();
     indata->file->data_at(indata->offset, readBuf);
     if (indata->keyframe) {
         kf = true;
@@ -118,7 +117,7 @@ parse_more:
         (unsigned char *)&readBuf[0], readBuf.size(), avp.pts, avp.dts, avp.pos);
     if (verbose) {
         fprintf(stderr, "av_parser_parse2(): offset %lld lenParsed %d size %d pointer %p readbuf 0x%p\n",
-            indata->offset, lenParsed, avp.size, avp.data, &readBuf[0]);
+            (long long)indata->offset, lenParsed, avp.size, avp.data, &readBuf[0]);
     }
     if (lenParsed) {
         if (indata->index + 1 >= gFrames.size()) {
@@ -196,7 +195,7 @@ parse_more:
     }
     //  it didn't consume any data, yet it didn't return a frame?
     fprintf(stderr, "ERROR in parser: lenParsed is 0 but no frame found index %d offset %lld file %s\n",
-        indata->index, indata->offset, indata->file->path_.string().c_str());
+        indata->index, (long long)indata->offset, indata->file->path_.string().c_str());
     return nullptr;
 ret:
     return indata;

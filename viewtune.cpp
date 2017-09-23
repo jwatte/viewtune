@@ -7,6 +7,8 @@
 #include <map>
 #include <ctype.h>
 #include <assert.h>
+#include <algorithm>
+#include <math.h>
 
 #include <FL/Fl.H>
 #include <FL/Fl_Double_Window.H>
@@ -96,7 +98,6 @@ enum GetFrameMode {
 };
 
 uint64_t determine_frame_time(uint64_t time, GetFrameMode mode) {
-    uint64_t moved = time;
     if (gFrames.size() == 0) {
         return 0;
     }
@@ -173,7 +174,6 @@ VideoFrame *get_keyframe_for_time(uint64_t frametime) {
 extern bool verbose;
 
 DecodedFrame *get_frame_at(uint64_t t, GetFrameMode mode = GetFrameModeClosest) {
-    DecodedFrame *frame = nullptr;
     uint64_t frameTime = determine_frame_time(t, mode);
     auto found(gDecodedFrames.lower_bound(frameTime));
     if ((found != gDecodedFrames.end()) && (found->first == frameTime)) {
@@ -210,7 +210,8 @@ DecodedFrame *get_frame_at(uint64_t t, GetFrameMode mode = GetFrameModeClosest) 
             break;
         }
         if (verbose) {
-            fprintf(stderr, "decoded frame %ld at offset %lld size %ld with time %lld for time %lld\n", (long)previx, prevoff, (long)prevsz, df->time, prevtime);
+            fprintf(stderr, "decoded frame %ld at offset %lld size %ld with time %lld for time %lld\n",
+                    (long)previx, (long long)prevoff, (long)prevsz, (long long)df->time, (long long)prevtime);
         }
         gDecodedFrames[df->time] = df;
         if (df->time >= frameTime && !ret) {
@@ -357,13 +358,13 @@ void analyze_all_riffs() {
     for (auto &frm : gFrames) {
         if (frm.pts && frm.pts < 0x8000000000000000ULL) {
             if (frm.pts - ptsOffset < prev) {
-                fprintf(stderr, "ERROR: PTS %lld is before previous PTS %lld\n", (uint64_t)frm.pts, (uint64_t)prev);
+                fprintf(stderr, "ERROR: PTS %lld is before previous PTS %lld\n", (long long)frm.pts, (long long)prev);
             }
             if (frm.pts < (uint64_t)ptsOffset) {
-                fprintf(stderr, "ERROR: PTS %lld is before start of file %lld\n", (uint64_t)frm.pts, (uint64_t)ptsOffset);
+                fprintf(stderr, "ERROR: PTS %lld is before start of file %lld\n", (long long)frm.pts, (long long)ptsOffset);
             }
             if (frm.pts > ptsOffset + prev + 1000000000) {
-                fprintf(stderr, "WARNING: PTS %lld jumps into the future from %lld\n", (uint64_t)frm.pts, (uint64_t)prev);
+                fprintf(stderr, "WARNING: PTS %lld jumps into the future from %lld\n", (long long)frm.pts, (long long)prev);
             }
             frm.pts -= ptsOffset;
             frm.time -= ptsOffset;
@@ -586,7 +587,7 @@ void on_idle(void *) {
         uint64_t time = (uint64_t)ceil(targetTime * 1e6);
         DecodedFrame *df = get_frame_at(time);
         if (!df) {
-            fprintf(stderr, "ERROR: Could not find frame at time %lld\n", (uint64_t)time);
+            fprintf(stderr, "ERROR: Could not find frame at time %lld\n", (long long)time);
             return;
         }
         actualTime = df->time * 1e-6;
