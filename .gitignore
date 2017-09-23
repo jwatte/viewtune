@@ -1,0 +1,16 @@
+x64
+Debug
+Release
+Win32
+.vs
+*PVS-*
+*.i
+*.obj
+*.exe
+*.plg
+*.log
+*.TMP
+*.pdb
+*.dll
+*.VC.*
+ipch
