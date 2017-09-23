@@ -12,6 +12,7 @@
 #include <FL/Fl_Double_Window.H>
 #include <FL/Fl_File_Chooser.H>
 #include <FL/Fl_Value_Slider.H>
+#include <FL/Fl_Value_Input.H>
 #include <FL/Fl_Output.H>
 #include <FL/Fl_Roller.H>
 #include <FL/Fl_Image.H>
@@ -111,6 +112,9 @@ uint64_t determine_frame_time(uint64_t time, GetFrameMode mode) {
         }
     }
     uint64_t bottomTime = gFrames[bottom].time;
+    while (bottom > 0 && gFrames[bottom - 1].time == bottomTime) {
+        --bottom;
+    }
     if (bottomTime > time) {
         assert(bottom == 0);
         return bottomTime;
@@ -166,6 +170,8 @@ VideoFrame *get_keyframe_for_time(uint64_t frametime) {
 #define MAX_FRAME_CACHE_SIZE 350
 #define FRAME_CACHE_HYSTERESIS 90
 
+extern bool verbose;
+
 DecodedFrame *get_frame_at(uint64_t t, GetFrameMode mode = GetFrameModeClosest) {
     DecodedFrame *frame = nullptr;
     uint64_t frameTime = determine_frame_time(t, mode);
@@ -193,14 +199,21 @@ DecodedFrame *get_frame_at(uint64_t t, GetFrameMode mode = GetFrameModeClosest) 
             df = gDecodedFreeList.front();
             gDecodedFreeList.pop_front();
         }
+        size_t previx = curFrame->index;
+        uint64_t prevoff = curFrame->offset;
+        size_t prevsz = curFrame->size;
+        uint64_t prevtime = curFrame->time;
         curFrame = decode_frame_and_advance(curFrame, df);
         if (!curFrame) {
             gDecodedFreeList.push_back(df);
             fprintf(stderr, "decode_frame_and_advance() failed\n");
             break;
         }
+        if (verbose) {
+            fprintf(stderr, "decoded frame %ld at offset %lld size %ld with time %lld for time %lld\n", (long)previx, prevoff, (long)prevsz, df->time, prevtime);
+        }
         gDecodedFrames[df->time] = df;
-        if (df->time == frameTime) {
+        if (df->time >= frameTime && !ret) {
             ret = df;
         }
         if (curFrame->keyframe) {
@@ -246,7 +259,6 @@ void analyze_all_riffs() {
     progress.show();
     ChunkHeader hdr;
     VideoFrame vf = { 0 };
-    uint64_t startTime = 1;
     for (auto const &rp : gRiffFiles) {
         output.value(rp->path_.string().c_str());
         progress.redraw();
@@ -273,11 +285,13 @@ void analyze_all_riffs() {
                 if (rp->data_at(pos, data, 1024)) {
                     if (data.size() >= sizeof(pdts)) {
                         vf.pts = ((pdts *)&data[0])->pts;
+                        vf.time = vf.pts;
                     }
                 }
             }
             else if (!strncmp(hdr.type, "time", 4)) {
                 if (rp->data_at(pos, data, 1024)) {
+                    /* time is not very regular -- pts is better
                     if (data.size() >= 8) {
                         memcpy(&vf.time, &data[0], 8);
                         if (startTime == 1) {
@@ -285,6 +299,7 @@ void analyze_all_riffs() {
                         }
                         vf.time -= startTime;
                     }
+                    */
                     size_t offset = 8;
                     while (offset <= data.size() - 6) {
                         steer_packet sp;
@@ -332,6 +347,31 @@ void analyze_all_riffs() {
                 //  unknown
             }
             pos = nextpos;
+        }
+    }
+    int64_t ptsOffset = 0;
+    if (gFrames.size() > 1) {
+        ptsOffset = std::max(gFrames[0].pts, gFrames[1].pts);
+    }
+    uint64_t prev = 0;
+    for (auto &frm : gFrames) {
+        if (frm.pts && frm.pts < 0x8000000000000000ULL) {
+            if (frm.pts - ptsOffset < prev) {
+                fprintf(stderr, "ERROR: PTS %lld is before previous PTS %lld\n", (uint64_t)frm.pts, (uint64_t)prev);
+            }
+            if (frm.pts < (uint64_t)ptsOffset) {
+                fprintf(stderr, "ERROR: PTS %lld is before start of file %lld\n", (uint64_t)frm.pts, (uint64_t)ptsOffset);
+            }
+            if (frm.pts > ptsOffset + prev + 1000000000) {
+                fprintf(stderr, "WARNING: PTS %lld jumps into the future from %lld\n", (uint64_t)frm.pts, (uint64_t)prev);
+            }
+            frm.pts -= ptsOffset;
+            frm.time -= ptsOffset;
+            prev = frm.pts;
+        }
+        else {
+            frm.pts = prev;
+            frm.time = prev;
         }
     }
     char str[256];
@@ -482,15 +522,15 @@ Fl_Output *outR;
 Fl_Output *outG;
 Fl_Output *outB;
 
+Fl_Value_Input *outTime;
+
+static double targetTime = 0.0;
+static double actualTime = -1.0;
 
 static double const DELTA_VALUE = 0.01f;
 
 void shuttle_callback(Fl_Widget *, void *) {
-    double t = shuttle->value();
-    uint64_t time = (uint64_t)ceil(t * 1e6);
-    DecodedFrame *df = get_frame_at(time);
-    frame->frame_ = df;
-    frame->redraw();
+    targetTime = shuttle->value();
 }
 
 void scrub_callback(Fl_Widget *, void *) {
@@ -512,7 +552,7 @@ void scrub_callback(Fl_Widget *, void *) {
             shuttle->value(s + v);
         }
     }
-    shuttle->do_callback();
+    targetTime = shuttle->value();
 }
 
 void build_gui() {
@@ -528,15 +568,33 @@ void build_gui() {
     scrubber->callback(scrub_callback, 0);
     frame = new Fl_VideoFrame(0, 0, 640, 480, "");
     outY = new Fl_Output(640 + colorLabelWidth, titleBarHeight, 30, oneRow, "Y");
-    outY = new Fl_Output(640 + colorLabelWidth, titleBarHeight+oneRow, 30, oneRow, "U");
-    outY = new Fl_Output(640 + colorLabelWidth, titleBarHeight+oneRow*2, 30, oneRow, "V");
-    outY = new Fl_Output(640 + colorLabelWidth, titleBarHeight+oneRow*3, 30, oneRow, "R");
-    outY = new Fl_Output(640 + colorLabelWidth, titleBarHeight+oneRow*4, 30, oneRow, "G");
-    outY = new Fl_Output(640 + colorLabelWidth, titleBarHeight+oneRow*5, 30, oneRow, "B");
+    outU = new Fl_Output(640 + colorLabelWidth, titleBarHeight+oneRow, 30, oneRow, "U");
+    outV = new Fl_Output(640 + colorLabelWidth, titleBarHeight+oneRow*2, 30, oneRow, "V");
+    outR = new Fl_Output(640 + colorLabelWidth, titleBarHeight+oneRow*3, 30, oneRow, "R");
+    outG = new Fl_Output(640 + colorLabelWidth, titleBarHeight+oneRow*4, 30, oneRow, "G");
+    outB = new Fl_Output(640 + colorLabelWidth, titleBarHeight+oneRow*5, 30, oneRow, "B");
+    outTime = new Fl_Value_Input(640 + colorLabelWidth*2, titleBarHeight + oneRow * 6, 120, oneRow, "Time");
 }
 
 void select_frame_time(uint64_t time) {
     shuttle->value(time * 1e-6);
+    shuttle->do_callback();
+}
+
+void on_idle(void *) {
+    if (targetTime != actualTime) {
+        uint64_t time = (uint64_t)ceil(targetTime * 1e6);
+        DecodedFrame *df = get_frame_at(time);
+        if (!df) {
+            fprintf(stderr, "ERROR: Could not find frame at time %lld\n", (uint64_t)time);
+            return;
+        }
+        actualTime = df->time * 1e-6;
+        targetTime = actualTime;
+        frame->frame_ = df;
+        frame->redraw();
+        outTime->value(actualTime);
+    }
 }
 
 int main(int argc, char const *argv[])
@@ -568,6 +626,7 @@ int main(int argc, char const *argv[])
     select_frame_time(0);
     shuttle_callback(shuttle, nullptr);
 
+    Fl::add_idle(on_idle, nullptr);
     int ret = Fl::run();
 
     mainWindow = NULL;

@@ -19,7 +19,7 @@ extern "C" {
 #pragma comment(lib, "avformat.lib")
 #pragma comment(lib, "avutil.lib")
 
-bool verbose = false;
+bool verbose = true;
 bool firstTime = true;
 
 extern std::vector<VideoFrame> gFrames;
@@ -33,7 +33,7 @@ public:
     Decoder();
     ~Decoder();
 
-    AVCodec *codec = 0;
+    static AVCodec *codec;
     AVCodecContext *ctx = 0;
     AVFrame *frame = 0;
     AVCodecParserContext *parser = 0;
@@ -43,6 +43,8 @@ public:
     uint64_t dtsbase = 0;
     std::vector<char> readBuf;
 };
+
+AVCodec *Decoder::codec = nullptr;
 
 Decoder::Decoder() {
 }
@@ -56,11 +58,11 @@ bool Decoder::begin_decode(VideoFrame *indata) {
     if (firstTime) {
         avcodec_register_all();
         firstTime = false;
+        if (verbose) {
+            av_log_set_level(99);
+        }
+        codec = avcodec_find_decoder(AV_CODEC_ID_H264);
     }
-    if (verbose) {
-        av_log_set_level(99);
-    }
-    codec = avcodec_find_decoder(AV_CODEC_ID_H264);
     if (!codec) {
         fprintf(stderr, "avcodec_find_decoder(): h264 not found\n");
         return false;
@@ -110,22 +112,21 @@ parse_more:
     if (indata->keyframe) {
         kf = true;
     }
-    if (indata->index + 1 >= gFrames.size()) {
-        indata = nullptr;
-    }
-    else {
-        indata = &gFrames[indata->index + 1];
-    }
     avp.pts = indata->pts;
     avp.dts = indata->pts;
     int lenParsed = av_parser_parse2(parser, ctx, &avp.data, &avp.size,
         (unsigned char *)&readBuf[0], readBuf.size(), avp.pts, avp.dts, avp.pos);
     if (verbose) {
-        fprintf(stderr, "av_parser_parse2(): lenParsed %d size %d pointer %p readbuf 0x%p\n",
-            lenParsed, avp.size, avp.data, &readBuf[0]);
+        fprintf(stderr, "av_parser_parse2(): offset %lld lenParsed %d size %d pointer %p readbuf 0x%p\n",
+            indata->offset, lenParsed, avp.size, avp.data, &readBuf[0]);
     }
-    if (lenParsed > 0) {
-        readBuf.erase(readBuf.begin(), readBuf.begin() + lenParsed);
+    if (lenParsed) {
+        if (indata->index + 1 >= gFrames.size()) {
+            indata = nullptr;
+        }
+        else {
+            indata = &gFrames[indata->index + 1];
+        }
     }
     if (avp.size) {
         int lenSent = avcodec_send_packet(ctx, &avp);
@@ -161,6 +162,12 @@ parse_more:
             if (ctx->refcounted_frames) {
                 av_frame_unref(frame);
             }
+            if (lenParsed > 0) {
+                readBuf.erase(readBuf.begin(), readBuf.begin() + lenParsed);
+            }
+            else {
+                readBuf.clear();    //  didn't advance frame pointers
+            }
             goto ret;
         }
         else if (err == AVERROR(EAGAIN)) {
@@ -180,7 +187,17 @@ parse_more:
             }
         }
     }
-    goto parse_more;
+    if (lenParsed > 0) {
+        readBuf.erase(readBuf.begin(), readBuf.begin() + lenParsed);
+        goto parse_more;
+    }
+    else {
+        readBuf.clear();    //  didn't advance frame pointers
+    }
+    //  it didn't consume any data, yet it didn't return a frame?
+    fprintf(stderr, "ERROR in parser: lenParsed is 0 but no frame found index %d offset %lld file %s\n",
+        indata->index, indata->offset, indata->file->path_.string().c_str());
+    return nullptr;
 ret:
     return indata;
 }
