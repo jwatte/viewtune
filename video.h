@@ -6,6 +6,12 @@
 #include <iostream>
 #include <fstream>
 
+struct steer_packet {
+    uint16_t code;
+    int16_t steer;
+    int16_t throttle;
+};
+
 struct ChunkHeader {
     char type[4];
     uint32_t size;
@@ -52,18 +58,22 @@ public:
     }
 
     bool data_at(uint64_t hdrpos, std::vector<char> &data, size_t max_size = 0) {
+        ChunkHeader ch;
+        return data_header_at(hdrpos, ch, data, max_size);
+    }
+
+    bool data_header_at(uint64_t hdrpos, ChunkHeader &ch, std::vector<char> &data, size_t max_size) {
         file_.seekg(hdrpos + 12, std::ios_base::beg);
-        ChunkHeader hdr = { 0 };
-        file_.read((char *)&hdr, sizeof(hdr));
+        file_.read((char *)&ch, sizeof(ch));
         if (max_size == 0) {
-            max_size = hdr.size;
+            max_size = ch.size;
         }
-        else if (max_size > hdr.size) {
-            max_size = hdr.size;
+        else if (max_size > ch.size) {
+            max_size = ch.size;
         }
         if (!file_.good() || (max_size > 8 * 1024 * 1024)) {
             fprintf(stderr, "%s: block %.4s at %lld size %ld is too big to read\n",
-                path_.string().c_str(), hdr.type, (long long)hdrpos, (long)hdr.size);
+                path_.string().c_str(), ch.type, (long long)hdrpos, (long)ch.size);
             return false;
         }
         size_t initsize = data.size();
@@ -74,7 +84,7 @@ public:
         file_.read((char *)&data[initsize], max_size);
         if (!file_.good()) {
             fprintf(stderr, "%s: block %.4s at %lld size %ld was truncated\n",
-                path_.string().c_str(), hdr.type, (long long)hdrpos, (long)hdr.size);
+                path_.string().c_str(), ch.type, (long long)hdrpos, (long)ch.size);
             return false;
         }
         return true;
@@ -147,8 +157,14 @@ public:
 };
 
 
+/* using a static decoder */
 void begin_decode(VideoFrame *frame);
 VideoFrame *decode_frame_and_advance(VideoFrame *frame, DecodedFrame *result);
 
+/* using parallel decoders */
+struct decoder_t *new_decoder();
+VideoFrame *decode_frame_and_advance(decoder_t *dec, VideoFrame *frame, DecodedFrame *result,
+        VideoFrame *(*next_frame)(VideoFrame *, void *), void *cookie);
+void destroy_decoder(struct decoder_t *dec);
 
 #endif  //  video_H

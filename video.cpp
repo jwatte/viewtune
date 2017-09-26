@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "video.h"
+#include "riffs.h"
 #include <vector>
 #include <stdio.h>
 
@@ -22,18 +23,18 @@ extern "C" {
 bool verbose = true;
 bool firstTime = true;
 
-extern std::vector<VideoFrame> gFrames;
 
 
 class Decoder {
 public:
     bool begin_decode(VideoFrame *frame);
-    VideoFrame *decode_frame_and_advance(VideoFrame *frame, DecodedFrame *result);
+    VideoFrame *decode_frame_and_advance(VideoFrame *frame, DecodedFrame *result,
+            VideoFrame *(*next_frame)(VideoFrame *, void *), void *);
 
     Decoder();
     ~Decoder();
 
-    static AVCodec *codec;
+    AVCodec *codec;
     AVCodecContext *ctx = 0;
     AVFrame *frame = 0;
     AVCodecParserContext *parser = 0;
@@ -44,25 +45,23 @@ public:
     std::vector<char> readBuf;
 };
 
-AVCodec *Decoder::codec = nullptr;
-
 Decoder::Decoder() {
-}
-
-Decoder::~Decoder() {
-    //  todo: deallocate libav
-}
-
-bool Decoder::begin_decode(VideoFrame *indata) {
-    readBuf.clear();
     if (firstTime) {
         avcodec_register_all();
         firstTime = false;
         if (verbose) {
             av_log_set_level(99);
         }
-        codec = avcodec_find_decoder(AV_CODEC_ID_H264);
     }
+}
+
+Decoder::~Decoder() {
+    //  todo: deallocate libav
+}
+
+bool Decoder::begin_decode(VideoFrame *) {
+    readBuf.clear();
+    codec = avcodec_find_decoder(AV_CODEC_ID_H264);
     if (!codec) {
         fprintf(stderr, "avcodec_find_decoder(): h264 not found\n");
         return false;
@@ -100,7 +99,8 @@ bool Decoder::begin_decode(VideoFrame *indata) {
     return true;
 }
 
-VideoFrame *Decoder::decode_frame_and_advance(VideoFrame *indata, DecodedFrame *result) {
+VideoFrame *Decoder::decode_frame_and_advance(VideoFrame *indata, DecodedFrame *result,
+        VideoFrame *(*next_frame)(VideoFrame *, void *), void *cookie) {
     bool kf = false;
     uint64_t t = indata->time;
 parse_more:
@@ -120,12 +120,7 @@ parse_more:
             (long long)indata->offset, lenParsed, avp.size, avp.data, &readBuf[0]);
     }
     if (lenParsed) {
-        if (indata->index + 1 >= gFrames.size()) {
-            indata = nullptr;
-        }
-        else {
-            indata = &gFrames[indata->index + 1];
-        }
+        indata = next_frame(indata, cookie);
     }
     if (avp.size) {
         int lenSent = avcodec_send_packet(ctx, &avp);
@@ -210,7 +205,34 @@ void begin_decode(VideoFrame *frame) {
     gDecoder->begin_decode(frame);
 }
 
-VideoFrame *decode_frame_and_advance(VideoFrame *frame, DecodedFrame *result) {
-    return gDecoder->decode_frame_and_advance(frame, result);
+static VideoFrame *static_next_frame(VideoFrame *indata, void *) {
+    if (indata->index + 1 >= gFrames.size()) {
+        indata = nullptr;
+    }
+    else {
+        indata = &gFrames[indata->index + 1];
+    }
+    return indata;
 }
+
+VideoFrame *decode_frame_and_advance(VideoFrame *frame, DecodedFrame *result) {
+    return gDecoder->decode_frame_and_advance(frame, result, static_next_frame, nullptr);
+}
+
+struct decoder_t *new_decoder() {
+    Decoder *dec = new Decoder();
+    dec->begin_decode(nullptr);
+    return (decoder_t *)dec;
+}
+
+VideoFrame *decode_frame_and_advance(decoder_t *decoder, VideoFrame *frame, DecodedFrame *result,
+        VideoFrame *(next_frame)(VideoFrame *, void *), void *cookie) {
+    Decoder *dec = (Decoder *)decoder;
+    return dec->decode_frame_and_advance(frame, result, next_frame, cookie);
+}
+
+void destroy_decoder(struct decoder_t *dec) {
+    delete (Decoder *)dec;
+}
+
 
