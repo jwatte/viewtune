@@ -2,6 +2,7 @@
 #define video_h
 
 #include <stdint.h>
+#include <pthread.h>
 
 #include <iostream>
 #include <fstream>
@@ -26,8 +27,23 @@ struct FileHeader {
 namespace fs = std::experimental::filesystem;
 
 class RiffFile {
+    class Locker {
+        public:
+            Locker(pthread_mutex_t &mtx) {
+                mtxp = &mtx;
+                pthread_mutex_lock(mtxp);
+            }
+            ~Locker() {
+                pthread_mutex_unlock(mtxp);
+            }
+            pthread_mutex_t *mtxp;
+    };
+
+    pthread_mutex_t mtx;
+
 public:
     RiffFile(fs::path const &path, uint64_t offset) : path_(path), offset_(offset) {
+        pthread_mutex_init(&mtx, nullptr);
         file_.open(path_.string(), std::ifstream::binary);
         if (!file_.good()) {
             throw std::runtime_error("Could not open file: " + path.string());
@@ -41,12 +57,16 @@ public:
             size_ -= 12;
         }
     }
+    ~RiffFile() {
+        pthread_mutex_destroy(&mtx);
+    }
 
     bool header_at(uint64_t pos, ChunkHeader &ret, uint64_t &opos) {
         if (pos >= size_) {
             opos = size_;
             return false;
         }
+        Locker l(mtx);
         file_.seekg(pos + 12, std::ios_base::beg);
         file_.read((char *)&ret, 8);
         if (!file_.good()) {
@@ -63,6 +83,7 @@ public:
     }
 
     bool data_header_at(uint64_t hdrpos, ChunkHeader &ch, std::vector<char> &data, size_t max_size) {
+        Locker l(mtx);
         file_.seekg(hdrpos + 12, std::ios_base::beg);
         file_.read((char *)&ch, sizeof(ch));
         if (max_size == 0) {

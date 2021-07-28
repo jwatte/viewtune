@@ -20,7 +20,7 @@ extern "C" {
 #pragma comment(lib, "avformat.lib")
 #pragma comment(lib, "avutil.lib")
 
-bool verbose = true;
+bool verbose = false;
 bool firstTime = true;
 
 

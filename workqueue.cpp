@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "workqueue.h"
 #include <pthread.h>
+#include <unistd.h>
 #include <list>
 
 static pthread_mutex_t wqMutex = PTHREAD_MUTEX_INITIALIZER;
@@ -11,6 +12,8 @@ static int wqWorking;
 static int wqComplete;
 static bool wqRunning;
 static std::list<Work *> wqWork;
+
+extern bool verbose;
 
 static void *wq_worker(void *) {
     pthread_mutex_lock(&wqMutex);
@@ -25,7 +28,9 @@ static void *wq_worker(void *) {
             Work *w = wqWork.front();
             wqWork.pop_front();
             wqWorking += 1;
-            fprintf(stderr, "got work: %s\n", w->name());
+            if (verbose) {
+                fprintf(stderr, "got work: %s\n", w->name());
+            }
             pthread_mutex_unlock(&wqMutex);
             try {
                 w->work();
@@ -69,7 +74,9 @@ bool add_work(Work *work) {
     pthread_mutex_lock(&wqMutex);
     wqWork.push_back(work);
     pthread_cond_signal(&wqCond);
-    fprintf(stderr, "work added: %s\n", work->name());
+    if (verbose) {
+        fprintf(stderr, "work added: %s\n", work->name());
+    }
     pthread_mutex_unlock(&wqMutex);
     return true;
 }
@@ -78,6 +85,9 @@ void wait_for_all_work_to_complete() {
     pthread_mutex_lock(&wqMutex);
     while (wqWorking > 0 || !wqWork.empty()) {
         pthread_cond_broadcast(&wqCond);
+        pthread_mutex_unlock(&wqMutex);
+        usleep(10000);
+        pthread_mutex_lock(&wqMutex);
     }
     pthread_mutex_unlock(&wqMutex);
 }

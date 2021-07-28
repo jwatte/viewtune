@@ -43,11 +43,13 @@ bool matches_except_for_digits(std::string const &a, std::string const &b) {
     return true;
 }
 
-void load_all_riffs(std::string const &path) {
+void load_all_riffs(std::string const &pin) {
+    std::string path(pin);
     std::string prefix(path);
     size_t pos = prefix.find_last_of('/');
     if (pos == std::string::npos) {
-        prefix = ".";
+        prefix = "./";
+        path = "./" + path;
     }
     else {
         prefix = prefix.substr(0, pos);

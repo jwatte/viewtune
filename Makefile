@@ -18,3 +18,5 @@ clean:
 obj/%.o:	%.cpp
 	-mkdir -p obj
 	g++ -c -o $@ $< -g -MMD -Wall -Werror -std=gnu++11 -Wno-unknown-pragmas
+
+-include $(patsubst %.o,%.d,$(sort $(OBJ_gobble) $(OBJ_viewtune)))

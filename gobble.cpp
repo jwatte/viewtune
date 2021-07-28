@@ -26,6 +26,8 @@
 int numChunksToDecode;
 int numChunksDecoded;
 
+extern bool verbose;
+
 
 class KeyframeWork : public Work {
     public:
@@ -101,7 +103,7 @@ class KeyframeWork : public Work {
                     VideoFrame vf = { 0 };
                     vf.pts = pts;
                     vf.time = pts;
-                    vf.offset = pos + 8;
+                    vf.offset = pos;
                     vf.file = file_;
                     vf.steer = steer;
                     vf.throttle = throttle;
@@ -109,6 +111,17 @@ class KeyframeWork : public Work {
                     vf.index = frames_.size();
                     vf.keyframe = (vf.index == 0);
                     frames_.push_back(vf);
+                }
+                else if (!strncmp(ch.type, "info", 4)) {
+                    //  skip the info chunk
+                }
+                else {
+                    fprintf(stderr, "unknown chunk type: %.4s at offset %lld\n", 
+                            ch.type, (long long)pos);
+                }
+                if (ch.size > 8 * 1024 * 1024) {
+                    fprintf(stderr, "too large (%ld) chunk type: %.4s at offset %lld\n",
+                            (long)ch.size, ch.type, (long long)pos);
                 }
                 pos = pos + 8 + ((ch.size + 3) & -4);
             }
@@ -140,10 +153,12 @@ VideoFrame *KeyframeWork::next_frame(VideoFrame *fr, void *co) {
 
 class RiffFileWork : public Work {
     public:
-        RiffFileWork(RiffFile *rf) : file_(rf) {}
+        RiffFileWork(RiffFile *rf) : file_(rf) {
+            n = file_->path_.string();
+            (void)n.c_str();
+        }
         RiffFile *file_;
         char const *name() {
-            n = file_->path_.string();
             return n.c_str();
         }
         std::string n;
@@ -204,11 +219,15 @@ int main(int argc, char const *argv[]) {
     fprintf(stderr, "loaded %ld riffs\n", (long)gRiffFiles.size());
     start_work_queue(nt ? nt : 16);
     split_riff_files();
-    fprintf(stderr, "waiting for work to complete\n");
-    usleep(1000000);
-    while (numChunksToDecode > numChunksDecoded) {
+    usleep(100000);
+    while (!numChunksToDecode || (numChunksToDecode > numChunksDecoded)) {
         usleep(100000);
-        fprintf(stderr, "%7d / %7d\r", numChunksDecoded, numChunksToDecode);
+        if (!verbose) {
+            fprintf(stderr, "%7d / %7d\r", numChunksDecoded, numChunksToDecode);
+        }
+    }
+    if (!verbose) {
+        fprintf(stderr, "waiting for work to complete\n");
     }
     wait_for_all_work_to_complete();
     stop_work_queue();
